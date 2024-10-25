@@ -15,7 +15,6 @@
 #include <unistd.h>
 #include <vector>
 
-#include "helpers.h"
 using namespace std;
 int match_elements(const char* sub, char* topic){
 
@@ -108,67 +107,12 @@ int match_elements(const char* sub, char* topic){
     return ok;
 }
 
-char* buildStatement(char* name, struct udp_packet udp_pkt){
-    //htonl
-    strcpy(name, udp_pkt.topic);
-    switch(udp_pkt.data_type){
-        case 0:{
-
-            strcat(name," - INT - ");
-            uint8_t sign = udp_pkt.value[0];
-            uint32_t num = htonl(*(uint32_t*) (udp_pkt.value+1));
-            if(sign == 1) {
-                strcat(name, "-");
-            }
-            strcat(name, to_string(num).c_str());
-            strcat(name, udp_pkt.value);
-            break;
-        };
-        case 1:{
-            strcat(name," - SHORT_REAL - ");
-            uint16_t num = htons(*(uint16_t*) (udp_pkt.value));
-            float number = (num)/100.00;
-            std::stringstream ss;
-            ss << std::fixed<< setprecision(2) << number;
-            strcat(name, ss.str().c_str());
-            break;
-        };
-        case 2:{
-            strcat(name, " - FLOAT - ");
-            uint8_t sign = udp_pkt.value[0];
-            uint32_t num = htonl(*(uint32_t*) (udp_pkt.value+1));
-            uint8_t power = udp_pkt.value[5];
-
-            if(sign == 1) {
-                strcat(name, "-");
-            }
-
-            double number = num/(pow(10, power));
-            string numberString = to_string(number);
-            size_t pos2 = numberString.find_first_of(".");
-            size_t pos = numberString.find_last_not_of("0");
-
-            std::stringstream ss;
-            ss << std::fixed<< setprecision(pos-pos2) << number;
-            strcat(name, ss.str().c_str());
-            break;
-
-        };
-        case 3:{
-            strcat(name, " - STRING - ");
-            char *val = (char*)malloc((CONTENT_MAXSIZE+1)*sizeof(char));
-            strcpy(val, udp_pkt.value);
-            if(strlen(udp_pkt.value) < (CONTENT_MAXSIZE+1)){
-                val[strlen(udp_pkt.value)] ='\0';
-                val = (char*)realloc(val, (strlen(udp_pkt.value)+1) * sizeof(char));
-            } else{
-                val[CONTENT_MAXSIZE+1] ='\0';
-            }
-            strcat(name, val);
-            break;
-        
-
-        };
-    }
-    return name;
+int main(){
+    char buf[51];
+    char buf2[51];
+    strcpy(buf, "*/100/+");
+    strcpy(buf2, "upb/precis/100/temperature");
+    int el = match_elements(buf, buf2);
+    cout<<el<<"  ";
+    return el;
 }

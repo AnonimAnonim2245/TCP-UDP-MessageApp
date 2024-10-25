@@ -160,7 +160,6 @@ class Process:
 
   def get_output_timeout(self, tout):
     """Tries to get one line of output from the process with a timeout."""
-
     if self.started:
       with timeout(tout):
         try:
@@ -283,7 +282,7 @@ def start_and_check_client(server, id, restart=False, test=True):
   print("Starting subscriber C" + id)
   client = Process(["./subscriber", "C" + id, ip, port])
   client.start()
-  outs = server.get_output_timeout(10)
+  outs = server.get_output_timeout(2)
 
   success = True
 
@@ -291,7 +290,6 @@ def start_and_check_client(server, id, restart=False, test=True):
   if not client.is_alive():
     print("Error: subscriber C" + id + " is not up")
     success = False
-    
 
   if not outs.startswith("New client C" + id + " connected from"):
     print("Error: server did not print that C" + id + " is connected")
@@ -305,7 +303,7 @@ def start_and_check_client(server, id, restart=False, test=True):
 def check_subscriber_output(c, client_id, target):
   """Compares the output of a TCP client with an expected string."""
   outc = c.get_output_timeout(1)
-  
+  print("???"+outc+"!!!"+target)
   if target not in outc:
     print("Error: C" + client_id + " output should contain [" + target + "], is actually [" + outc.rstrip() + "]")
     return False
@@ -321,6 +319,10 @@ def check_subscriber_stop(server, c, id):
   # check that the process is no longer alive
   outs = server.get_output_timeout(1)
   message = "Client C" + id + " disconnected."
+  print(outs.rstrip())
+  print(message)
+  print(outs.rstrip() != message)
+  print(c.is_alive())
   if outs.rstrip() != message or c.is_alive():
     print("Error: client C" + id + " not disconnected")
     return False
@@ -339,7 +341,6 @@ def check_two_subscribers(c1, c2, topics, topic_id):
   target = topic.print()
   success = check_subscriber_output(c1, "1", target)
   return check_subscriber_output(c2, "2", target) and success
-
 def subscribe_to_topic(c, topic_name="", wildcard=""):
   """Sends subscribe command on a client"""
   c.send_input("subscribe " + topic_name + wildcard)
@@ -396,9 +397,8 @@ def run_test_data_unsubscribed(server, c1):
 
   if not failed:
     pass_test("data_unsubscribed")
-  print("PASSED")
 
-def run_test_c1_subscribe_all(c1, topics):
+def run_test_c1_subscribe_all(server, c1, topics):
   """Tests that subscriber C1 can subscribe to all topics."""
   fail_test("c1_subscribe_all")
   print("Subscribing C1 to all topics")
@@ -422,8 +422,11 @@ def run_test_data_subscribed(server, c1, topics):
   # generate one message for each topic
   print("Generating one message for each topic")
   run_udp_client()
-  print(server.get_output_timeout(1))
+
   # check that C1 receives all the messages correctly
+  #c1.send_input("unsubscribe huge_s")
+  #c1.send_input("subscribe huge_string")
+
   success = True
   for topic in topics:
     success = check_subscriber_output(c1, "1", topic.print()) and success
@@ -470,6 +473,8 @@ def run_test_same_id(server):
 
   outs = server.get_output_timeout(2)
   success = True
+
+  print(outs)
 
   if c1bis.is_alive():
     print("Error: second subscriber C1 is up")
@@ -566,7 +571,7 @@ def run_test_server_stop(server, c1):
   if success:
     pass_test("server_stop")
 
-def run_test_c2_subscribe_plus_wildcard(c2, topics):
+def run_test_c2_subscribe_plus_wildcard(server, c2, topics):
   """Tests that subscriber C2 can subscribe to a topic with wildcard."""
   # setup the test and the wildcard flow
   fail_test("c2_subscribe_plus_wildcard")
@@ -605,7 +610,7 @@ def run_test_c2_subscribe_plus_wildcard(c2, topics):
   #unsubscribe from topics
   c2.send_input("unsubscribe " + wildcard)
   c2.get_output_timeout(1)
-
+  print("herew")
   # subscribe to topics
   wildcard = 'upb/ec/100/+'
   print("Subscribing C2 to topics " + wildcard)
@@ -624,8 +629,10 @@ def run_test_c2_subscribe_plus_wildcard(c2, topics):
   # unsubscribe from topics
   c2.send_input("unsubscribe " + wildcard)
   c2.get_output_timeout(1)
+  print("PASSED")
 
   if success:
+
     pass_test("c2_subscribe_plus_wildcard")
 
 
@@ -707,7 +714,7 @@ def run_test_c2_subscribe_star_wildcard(c2, topics):
   # unsubscribe from topics
   c2.send_input("unsubscribe " + wildcard)
   c2.get_output_timeout(1)
-
+  print("SUCCEDED")
   if success:
     pass_test("c2_subscribe_star_wildcard")
 
@@ -817,9 +824,10 @@ def run_test_c2_subscribe_wildcard_set_inclusion(c2, topics):
 
   # run the checks
   topic = topics[4]
+  print(topic.print())
   success = check_subscriber_output(c2, "2", topic.print())
   success = success and check_subscriber_output(c2, "2", "timeout")
-  # success = c2.get_output_timeout(1) == "" and success
+  #success = c2.get_output_timeout(1) == "" and success
 
   # unsubscribe from topics
   c2.send_input("unsubscribe " + wildcards[0])
@@ -855,7 +863,7 @@ def h2_test():
     run_test_data_unsubscribed(server, c1)
 
     # subscribe C1 to all topics and verify
-    run_test_c1_subscribe_all(c1, topics)
+    run_test_c1_subscribe_all(server, c1, topics)
 
     # generate messages on all topics and check that C1 receives them
     run_test_data_subscribed(server, c1, topics)
@@ -882,7 +890,7 @@ def h2_test():
           run_test_c2_subscribe(c2, topics)
 
           # subscribe C2 to topics containing single + wildcard and check
-          run_test_c2_subscribe_plus_wildcard(c2, wildcard_topics)
+          run_test_c2_subscribe_plus_wildcard(server, c2, wildcard_topics)
 
           # subscribe C2 to topics containing single * wildcard and check
           run_test_c2_subscribe_star_wildcard(c2, wildcard_topics)

@@ -4,8 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "common.h"
-#include<vector>
-#include<unordered_map>
+
 
 /*
  * Macro de verificare a erorilor
@@ -13,8 +12,8 @@
  * 		int fd = open (file_name , O_RDONLY);
  * 		DIE( fd == -1, "open failed");
  */
-std::string buildStatement(std::string name, struct udp_packet udp_pkt);
-
+int match_elements(const char* sub, char* topic);
+char* buildStatement(char* name, struct udp_packet udp_pkt);
 #define DIE(assertion, call_description)                                       \
   do {                                                                         \
     if (assertion) {                                                           \

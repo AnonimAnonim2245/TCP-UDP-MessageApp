@@ -7,6 +7,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <bits/stdc++.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdio.h>
@@ -21,85 +22,24 @@
 #include <unistd.h>
 #include <vector>
 #include <string_view>
-#include<vector>
-#include<unordered_map>
+
 #include "common.h"
 #include "helpers.h"
 
 #define MAX_CONNECTIONS 32
 #define FULLMSG_SIZE 2000
 using namespace std;
-unordered_map<string, vector<string> > clientid_to_topic;
+
+// Namespace and data structures for client-topic relationships
+// find all the topics of a specific client id
+unordered_map<string, vector<string>> clientid_to_topic;
+// all topics
+vector<string> topicsTotal;
+// find an id by socket
 unordered_map<int, string> socket_to_id;
+// reverse
 unordered_map<string, int> id_to_socket;
-/// refactor here need to do a class
 
-
-// Primeste date de pe connfd1 si trimite mesajul receptionat pe connfd2
-int receive_and_send(int connfd1, int connfd2, size_t len) {
-    int bytes_received;
-    char buffer[len];
-
-    // Primim exact len octeti de la connfd1
-    bytes_received = recv_all(connfd1, buffer, len);
-    // S-a inchis conexiunea
-    if (bytes_received == 0) {
-        return 0;
-    }
-    DIE(bytes_received < 0, "recv");
-
-    // Trimitem mesajul catre connfd2
-    int rc = send_all(connfd2, buffer, len);
-    if (rc <= 0) {
-        perror("send_all");
-        return -1;
-    }
-
-    return bytes_received;
-}
-
-void run_chat_server(int listenfd) {
-    struct sockaddr_in client_addr1;
-    struct sockaddr_in client_addr2;
-    socklen_t clen1 = sizeof(client_addr1);
-    socklen_t clen2 = sizeof(client_addr2);
-
-    int connfd1 = -1;
-    int connfd2 = -1;
-    int rc;
-
-    // Setam socket-ul listenfd pentru ascultare
-    rc = listen(listenfd, 2);
-    DIE(rc < 0, "listen");
-
-    // Acceptam doua conexiuni
-    printf("Astept conectarea primului client...\n");
-    connfd1 = accept(listenfd, (struct sockaddr *) &client_addr1, &clen1);
-    DIE(connfd1 < 0, "accept");
-
-    printf("Astept connectarea clientului 2...\n");
-
-    connfd2 = accept(listenfd, (struct sockaddr *) &client_addr2, &clen2);
-    DIE(connfd2 < 0, "accept");
-
-    while (1) {
-        // Primim de la primul client, trimitem catre al 2lea
-        printf("Primesc de la 1 si trimit catre 2...\n");
-        int rc = receive_and_send(connfd1, connfd2, sizeof(struct chat_packet));
-        if (rc <= 0) {
-            break;
-        }
-
-        rc = receive_and_send(connfd2, connfd1, sizeof(struct chat_packet));
-        if (rc <= 0) {
-            break;
-        }
-    }
-
-    // Inchidem conexiunile si socketii creati
-    close(connfd1);
-    close(connfd2);
-}
 
 void run_chat_multi_server(int listenfd, int listen_udp) {
 
@@ -110,38 +50,38 @@ void run_chat_multi_server(int listenfd, int listen_udp) {
     struct chat_packet received_packet;
     struct client_command pack2;
 
-    // Setam socket-ul listenfd pentru ascultare
+    // Set up the listening socket
     rc = listen(listenfd, MAX_CONNECTIONS);
     DIE(rc < 0, "listen");
 
-    // se adauga noul file descriptor (socketul pe care se asculta conexiuni) in
-    // multimea read_fds
-    poll_fds[0].fd = STDIN_FILENO;
+
+    // Add file descriptors to the poll set:
+    poll_fds[0].fd = STDIN_FILENO; // Standard input for commands
     poll_fds[0].events = POLLIN;
 
-    poll_fds[1].fd = listenfd;
+    poll_fds[1].fd = listenfd;  // TCP listening socket
     poll_fds[1].events = POLLIN;
 
-    poll_fds[2].fd = listen_udp;
-    poll_fds[2].events = POLLIN;   
+    poll_fds[2].fd = listen_udp; // UDP listening socket
+    poll_fds[2].events = POLLIN; 
 
+    int newsockfd2;
     while (1) {
-
-        
-        
 
         rc = poll(poll_fds, num_clients, -1);
         DIE(rc < 0, "poll");
 
         for (int i = 0; i < num_clients; i++) {
-
             if(poll_fds[i].fd == STDIN_FILENO){
+                // Handling user input from stdin
                 struct timeval tv; 
                 fd_set readfds;
                 int retval;
 
-                tv.tv_sec = 1;
-                tv.tv_usec = 0;
+                tv.tv_sec = 0;
+                tv.tv_usec = 100;
+
+                //setting a time period for the user to respond
 
                 FD_ZERO(&readfds);
                 FD_SET(0, &readfds);
@@ -152,13 +92,14 @@ void run_chat_multi_server(int listenfd, int listen_udp) {
                     perror("select()");
                 else if (retval > 0)
                 {
+
                     char buf[1500];
-                    fgets(buf, sizeof(buf), stdin);
+                    cin>>buf;
                     
-                    if(!strncmp(buf, "exit", 4)){
-                    return;
+                    if(!strcmp(buf, "exit")){
+                        return;  // Exit on "exit" command
                     } else{
-                    continue;
+                        continue; // invalid command
                     }
                 }   
                 else
@@ -174,64 +115,96 @@ void run_chat_multi_server(int listenfd, int listen_udp) {
                     int newsockfd =
                             accept(listenfd, (struct sockaddr *) &cli_addr, &cli_len);
                     DIE(newsockfd < 0, "accept");
-                    char buf[1500];
-                    recv(newsockfd, buf, sizeof(buf), 0);
 
-                    if(clientid_to_topic.find(buf) !=clientid_to_topic.end()){
-                        std :: cout << "Client " << buf << " already connected.\n";
+                    // Receive client ID and check if it is already connected
+                    char buf[1500];
+                    rc = recv(newsockfd, buf, sizeof(buf), 0);
+                    if (rc < 0){
+                        perror("recv");
+                        close(newsockfd);
                         continue;
                     }
 
-                    clientid_to_topic[buf] = vector<string>();
+
+                    size_t ok = 0;
+                    if(clientid_to_topic.find(buf) !=clientid_to_topic.end()){
+                        std :: cout << "Client " << buf << " already connected.\n";
+                        rc = send(newsockfd, &ok, sizeof(size_t), 0);
+                        DIE(rc < 0, "send");
+                        continue;
+                    }
+
 
                     
-                    // se adauga noul socket intors de accept() la multimea descriptorilor
-                    // de citire
+                    // Add the new socket to the poll set
+
                     poll_fds[num_clients].fd = newsockfd;
                     poll_fds[num_clients].events = POLLIN;
                     num_clients++;
-
+                    newsockfd2 = newsockfd;
                     socket_to_id[newsockfd] = buf;
                     id_to_socket[buf] = newsockfd;
-                    std::cout << "New client " << buf << " connected from "<< inet_ntoa(cli_addr.sin_addr) <<":"<< ntohs(cli_addr.sin_port)<<".\n";
+
+                    clientid_to_topic[buf] = vector<string>(); // Initialize client's topics
+                    std::cout << "New client " << buf << " connected from "<< inet_ntoa(cli_addr.sin_addr) <<":"<< ntohs(cli_addr.sin_port)<<"  "<<newsockfd<<".\n";
+                    ok = 1;
+                    rc = send(newsockfd, &ok, sizeof(size_t), 0);
+                    DIE(rc < 0, "send");
+
                 } else if (poll_fds[i].fd == listen_udp){
+                    // Handle incoming UDP message and process it for subscribers
+
 
                     struct udp_packet udp_pkt;
                     struct sockaddr_in server_address;
                     socklen_t slen = sizeof(server_address);
-                    int g = recvfrom(poll_fds[i].fd, &udp_pkt , sizeof(udp_packet), 0, (struct sockaddr *)&server_address, &slen);
-                
-
+                    int g = recvfrom(poll_fds[i].fd, &udp_pkt , sizeof(udp_pkt), 0, (sockaddr*)&server_address, &slen);
+                    
+                    //build the string to be parsed
                     string statement;
+                    //converts the ip adress in network byte order
+
                     statement+= inet_ntoa(server_address.sin_addr)+string(":");
+                    // the same for port
                     statement+=std::to_string(ntohs(server_address.sin_port))+string(" - ");
-                    statement = buildStatement(statement, udp_pkt);
-    
-                    std::cout<<statement<<"\n";
+                    //ensure the a message is sent one time
+                    set<string> isContaining = set<string>();
+                    
+
 
                     for(auto it3 = clientid_to_topic.begin() ; it3 != clientid_to_topic.end(); it3++){
+                        
                         for(vector<string>::iterator it4 = it3->second.begin() ; it4 != it3->second.end(); it4++){
-                            if(statement.find(it4->c_str()) != string::npos){
+                            ///ensure that the udp_pachet is sent only one time
+                            if(!isContaining.count(udp_pkt.topic)){
 
-                                int getSocket = id_to_socket[it3->first];
-                                size_t statementLen = statement.length();
-                                int rc2 = send(getSocket, &statementLen, sizeof(size_t), 0);
-                                DIE(rc2 < 0, "send");
-                                char* statementChar = new char[statementLen];
-                                strcpy(statementChar, statement.c_str());
-                                send_all(getSocket, statementChar, sizeof(statementChar));
+                                //check if the value matches or respects the wildcard rule
+                                if(!strcmp(it4->c_str(), udp_pkt.topic) || match_elements(it4->c_str(), udp_pkt.topic)==2){
+                                    
+                                    int getSocket = id_to_socket[it3->first];
+                                    int rc = send_all(getSocket, &udp_pkt, sizeof(udp_pkt));
+                                    DIE(rc < 0, "send");
+                                    isContaining.insert(udp_pkt.topic);
+                                    
+                                }
                             }
                         }
                     }
+                    //cout<<"not entered";
+                    //cout<<"not entered!!!"<<clientid_to_topic.size()<<".\n";
 
 
                 }else {
-                    // s-au primit date pe unul din socketii de client,
-                    // asa ca serverul trebuie sa le receptioneze
+                                        
+                    // Receive data from a client, 
+                    // server process the command
+
+
                     int rc = recv_all(poll_fds[i].fd, &pack2,
                                       sizeof(pack2));
-                    DIE(rc < 0, "recv");
+
                     if (rc == 0) {
+                        // Handle client disconnection
                         unordered_map<int, string> :: iterator it = socket_to_id.find(poll_fds[i].fd);
                             
                         if(it == socket_to_id.end()){
@@ -244,20 +217,28 @@ void run_chat_multi_server(int listenfd, int listen_udp) {
 
                             std::cout << "Client "<<  id2 << " disconnected.\n";
 
-                            // se scoate din multimea de citire socketul inchis
+                            // Remove closed socket from poll set
                             for (int j = i; j < num_clients - 1; j++) {
                                     poll_fds[j] = poll_fds[j + 1];
                             }
+                            poll_fds[i].revents = 0;
+
+                            close(poll_fds[i].fd);
+
 
                             num_clients--;
+                            i=-1;
+                            continue;
                             
 
                         }
                         
 
                     } else {
-                        
                         if(!strcmp(pack2.command, "exit")){
+
+                            // Handle specific client commands like "exit", "subscribe", "unsubscribe"
+
                             unordered_map<int, string> :: iterator it = socket_to_id.find(poll_fds[i].fd);
                             
                             if(it == socket_to_id.end()){
@@ -270,53 +251,60 @@ void run_chat_multi_server(int listenfd, int listen_udp) {
                                 id_to_socket.erase(id2);
 
                                 std::cout << "Client "<<id2 <<" disconnected.\n";
-                                close(poll_fds[i].fd);
+                                
 
-                                // se scoate din multimea de citire socketul inchis
+                                // Remove closed socket from poll set
                                 for (int j = i; j < num_clients - 1; j++) {
                                         poll_fds[j] = poll_fds[j + 1];
                                 }
+                                poll_fds[i].revents = 0;
+                                close(poll_fds[i].fd);
 
                                 num_clients--;
 
                             }
 
 
-                        } else if(!strcmp(pack2.command, "subscribe")){
+                        } else
+                         if(!strcmp(pack2.command, "subscribe")){
+                            // Handle "subscribe" command for a topic
+
                             unordered_map<int, string> :: iterator it = socket_to_id.find(poll_fds[i].fd);
-                            cout<<it->second<<".\n";
-                            unordered_map<string, vector<string> > :: iterator it2 = clientid_to_topic.find(it->second);
+                            unordered_map<string, vector<string>> :: iterator it2 = clientid_to_topic.find(it->second);
 
                             vector<string> topics = it2->second;
                             int pos = -1, pos2=-1;
-                            for(vector<string>::iterator it3 = topics.begin() ; it3 != topics.end(); it3++){
+                            //check if there is already a subscriber
+                            for(string name:topics){
                                 pos++;
-                                string name = it3->c_str();
                                 if(!name.compare(pack2.content)){
                                   pos2=pos;
                                   break;
                                 }
                             }
+
+
                             if(pos2!=-1){
                                 std::cout << "Client "<< it->second << " is already subscribed to this topic.\n";
+                                close(poll_fds[i].fd);
                                 continue;
                             }
-                            
-                            topics.push_back(pack2.content);
-                            clientid_to_topic[it->second] = topics;
-                            
+                          
+                            clientid_to_topic[it->second].push_back(pack2.content);
+                            topicsTotal.push_back(pack2.content);
 
 
                         } else if(!strcmp(pack2.command, "unsubscribe")){
+                            // Handle "unsubscribe" command for a topic
+
                             unordered_map<int, string> :: iterator it = socket_to_id.find(poll_fds[i].fd);
-                            unordered_map<string, vector<string> > :: iterator it2 = clientid_to_topic.find(it->second);
+                            unordered_map<string, vector<string>> :: iterator it2 = clientid_to_topic.find(it->second);
 
                             vector<string> topics = it2->second;
                             int pos = -1, pos2=-1;
-                            for(vector<string>::iterator it3 = topics.begin() ; it3 != topics.end(); it3++){
+                            for(string it3:topics){
                                 pos++;
-                                string name = it3->c_str();
-                                if(!name.compare(pack2.content)){
+                                if(!it3.compare(pack2.content)){
                                   pos2=pos;
                                   break;
                                 }
@@ -326,23 +314,12 @@ void run_chat_multi_server(int listenfd, int listen_udp) {
                                 std::cout << "Client "<< it->second << " is not subscribed to this topic.\n";
                                 continue;
                             } else {
-                                topics.erase(topics.begin()+pos2);
+                                clientid_to_topic[it->second].erase(std::next(clientid_to_topic[it->second].begin(),pos2));
                             }
-
-                            clientid_to_topic[it->second] = topics;
-
                             
                         }
                         
-                        /* 2.1: Trimite mesajul catre toti ceilalti clienti */
-                        /*for (int j = 0; j < num_clients; j++) {
-                            if (poll_fds[j].fd != listenfd && poll_fds[j].fd != STDIN_FILENO &&
-                            poll_fds[j].fd != listen_udp && poll_fds[j].fd != poll_fds[i].fd) {
-                                
-                                int sent_bytes = send_all(poll_fds[j].fd, &pack2, sizeof(pack2));
-                                DIE(sent_bytes < 0, "send");
-                            }
-                        }*/
+                        
                     }
                 }
             }
@@ -359,66 +336,59 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Parsam port-ul ca un numar
+    // Parse the port number
     uint16_t port;
     int rc = sscanf(argv[1], "%hu", &port);
     DIE(rc != 1, "Given port is invalid");
 
 
-    // Obtinem un socket TCP pentru receptionarea conexiunilor
+    // Create a TCP socket for receiving connections
     int listenfd = socket(AF_INET, SOCK_STREAM, 0);
     DIE(listenfd < 0, "socket");
 
-    // Completăm in serv_addr adresa serverului, familia de adrese si portul
-    // pentru conectare
+    // Prepare server address structure
     struct sockaddr_in serv_addr;
     socklen_t socket_len = sizeof(struct sockaddr_in);
 
-    // Facem adresa socket-ului reutilizabila, ca sa nu primim eroare in caz ca
-    // rulam de 2 ori rapid
-    int enable = 1;
-    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
-        perror("setsockopt(SO_REUSEADDR) failed");
 
+    // Set socket options to disable Nagle’s algorithm for low latency
     int on = 1;
     int result = setsockopt(listenfd, IPPROTO_TCP, TCP_NODELAY, (char*)&on, sizeof(int));
     if(result < 0){
         perror("setsockopt(TCP_NODELAY) failed");
     }
+    
+    // Enable socket reuse option for rapid re-runs
+    int enable = 1;
+    if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0)
+        perror("setsockopt(SO_REUSEADDR) failed");
 
     
 
-    memset(&serv_addr, 0, socket_len);
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(port);
-    
-
-    // Asociem adresa serverului cu socketul creat folosind bind
-    rc = bind(listenfd, (const struct sockaddr *) &serv_addr, sizeof(serv_addr));
-    DIE(rc < 0, "bind");
-
-    int listen_udp = socket(AF_INET, SOCK_DGRAM, 0);
-    DIE(listen_udp < 0, "socket");
-    
-    int on2 = 1;
-    int result2 = setsockopt(listen_udp, IPPROTO_UDP, TCP_NODELAY, (char*)&on2, sizeof(int));
-    if(result2 < 0){
-        perror("setsockopt(TCP_NODELAY) failed");
-    }
-    
     memset(&serv_addr, 0, socket_len);
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(port);
     
+
+    // Bind server address to the TCP socket
+    rc = bind(listenfd, (const struct sockaddr *) &serv_addr, sizeof(serv_addr));
+    DIE(rc < 0, "bind");
+
+    // Create a UDP socket for receiving connections
+    int listen_udp = socket(AF_INET, SOCK_DGRAM, 0);
+    DIE(listen_udp < 0, "socket");
+  
+
+    // Bind server address to the UDP socket
     rc = bind(listen_udp, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
     DIE(rc < 0, "bind");
 
 
-
+    // Start the multi-client chat server handling both TCP and UDP connections
     run_chat_multi_server(listenfd, listen_udp);
 
-    // Inchidem listenfd
+    // Close the listening TCP socket
     close(listenfd);
 
     return 1;
